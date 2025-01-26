@@ -52,10 +52,18 @@ class ScraperConfig:
         geo_ids = [cls.LOCATION_MAP.get(location.strip()) for location in locations]
         return cls(
             keywords=os.getenv("KEYWORDS", ""),
-            geo_ids=geo_ids,
+            geo_ids=[
+                cls.LOCATION_MAP.get(loc.strip())
+                for loc in os.getenv("LOCATIONS", "").lower().split(",")
+                if loc.strip()
+            ],
             date_filter=cls.DATE_FILTER_MAP.get(os.getenv("DATE_FILTER", "past_24h")),
-            contains=os.getenv("CONTAINS", "").split(","),
-            non_contains=os.getenv("NON_CONTAINS", "").split(","),
+            contains=[
+                k.strip() for k in os.getenv("CONTAINS", "").split(",") if k.strip()
+            ],
+            non_contains=[
+                k.strip() for k in os.getenv("NON_CONTAINS", "").split(",") if k.strip()
+            ],
             linkedin_email=os.getenv("LINKEDIN_EMAIL"),
             linkedin_password=os.getenv("LINKEDIN_PASSWORD"),
             headless=os.getenv("HEADLESS", "false").lower() == "true",

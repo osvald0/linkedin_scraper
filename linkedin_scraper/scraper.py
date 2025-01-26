@@ -40,7 +40,7 @@ class LinkedInJobScraper:
         Handles failures by tracking failed jobs and their error messages.
         Finally saves both successful and failed jobs to output file.
         """
-        self.logger.info("Starting scraping process")
+        self.logger.info("Starting scraping process...")
         options = webdriver.ChromeOptions()
 
         if self.config.headless:
@@ -55,8 +55,6 @@ class LinkedInJobScraper:
         failed_jobs = []
 
         try:
-
-            self.logger.info("Attempting login")
             self._login(driver)
 
             for geo_id in self.config.geo_ids:
@@ -67,15 +65,21 @@ class LinkedInJobScraper:
                 try:
                     details = self._get_job_details(driver, job_id)
                     if details and self._should_include_job(details):
+                        self.logger.info("Job included")
                         all_jobs.append(details)
-
+                    else:
+                        self.logger.info("Job excluded")
                 except Exception as e:
-                    failed_jobs.append({"job_id": job_id, "error": str(e)})
-                    contin
+                    self.logger.error(f"Error: {e}")
+                    continue
         finally:
             driver.quit()
 
-        if all_jobs or failed_jobs:
+        self.logger.info(
+            f"Found {len(all_jobs)} successful jobs and {len(failed_jobs)} failed jobs"
+        )
+
+        if len(all_jobs) > 0 or len(failed_jobs) > 0:
             self._save_results(all_jobs, failed_jobs)
 
     def _get_job_ids(
@@ -94,19 +98,19 @@ class LinkedInJobScraper:
         """
 
         self.logger.info(f"Getting jobs for keyword: {keyword}, geo_id: {geo_id}")
+
         url = f"https://www.linkedin.com/jobs/search?keywords={keyword}&f_TPR={self.config.date_filter}&geoId={geo_id}"
+
         self.logger.info(f"Navigating to: {url}")
+
         driver.get(url)
-        # breakpoint()
         time.sleep(5)
 
-        # I have issues with this selector, rate limit again?
-        # job_list = driver.find_element(By.CLASS_NAME, "jobs-search__results-list")
-
-        job_cards = driver.find_elements(By.CLASS_NAME, "job-card-container--clickable")
+        job_cards = driver.find_elements(
+            By.CSS_SELECTOR, '[data-job-id]:not([data-job-id="search"])'
+        )
 
         self.logger.info(f"Found {len(job_cards)} job cards")
-        self.logger.info(job_cards)
 
         job_ids = []
 
@@ -134,10 +138,13 @@ class LinkedInJobScraper:
         Returns:
             Dictionary containing job details or None if extraction fails
         """
+
+        self.logger.info(f"Getting details for job {job_id}")
+
         url = f"https://www.linkedin.com/jobs/search/?currentJobId={job_id}"
         driver.get(url)
         # TODO: Create a function to generate random sleeps times between 5 and 10 secs.
-        time.sleep(5)
+        time.sleep(20)
 
         try:
             details = {
@@ -152,6 +159,10 @@ class LinkedInJobScraper:
                     By.CLASS_NAME, "jobs-description__content"
                 ).text,
                 "url": url,
+                # "location": driver.find_element(
+                #     By.XPATH,
+                #     '(//div[contains(@class, "job-details-jobs-unified-top-card__primary-description-container")]//div[contains(@class, "tvm__text")])[1]',
+                # ).text,
             }
             self.logger.info(f"Extracted job details for {job_id}")
             return details
@@ -172,11 +183,18 @@ class LinkedInJobScraper:
         """
         content = " ".join(str(value).lower() for value in job_details.values())
 
-        if not all(keyword.lower() in content for keyword in self.config.contains):
-            return False
+        print("Keyword matches:")
 
-        if any(keyword.lower() in content for keyword in self.config.non_contains):
-            return False
+        for keyword in self.config.contains:
+            print(f"{keyword}: {keyword.lower() in content}")
+
+        if self.config.contains:
+            if not any(keyword.lower() in content for keyword in self.config.contains):
+                return False
+
+        if self.config.non_contains:
+            if any(keyword.lower() in content for keyword in self.config.non_contains):
+                return False
 
         return True
 
@@ -189,6 +207,8 @@ class LinkedInJobScraper:
 
         Navigates to login page and authenticates using email/password from config.
         """
+        self.logger.info("Attempting login")
+
         driver.get("https://www.linkedin.com/login")
 
         WebDriverWait(driver, 10).until(
@@ -197,6 +217,8 @@ class LinkedInJobScraper:
 
         driver.find_element(By.ID, "password").send_keys(self.config.linkedin_password)
         driver.find_element(By.CSS_SELECTOR, "[type=submit]").click()
+
+        # I need time to pass the manual validation!
         time.sleep(15)
 
     def _save_results_json(self, jobs: List[Dict], failed_jobs: List[Dict]) -> None:
@@ -232,15 +254,21 @@ class LinkedInJobScraper:
         """Save results to SQLite database and JSON file."""
         session = self.Session()
 
+        self.logger.info(
+            f"Attempting to save {len(jobs)} successful and {len(failed_jobs)} failed jobs"
+        )
+
         try:
             for job_data in jobs:
+                self.logger.info(f"Processing job {job_data['job_id']}")
                 job = Job(
-                    job_id=job_data["job_id"],
-                    title=job_data["title"],
-                    company=job_data["company"],
-                    description=job_data["description"],
-                    url=job_data["url"],
                     success=True,
+                    url=job_data["url"],
+                    title=job_data["title"],
+                    job_id=job_data["job_id"],
+                    company=job_data["company"],
+                    location=job_data.get("location"),
+                    description=job_data["description"],
                 )
                 session.merge(job)
 
@@ -254,8 +282,8 @@ class LinkedInJobScraper:
             )
 
         except Exception as e:
-            session.rollback()
             self.logger.error(f"Database error: {str(e)}")
+            session.rollback()
 
         finally:
             session.close()
