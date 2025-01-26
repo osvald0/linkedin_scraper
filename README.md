@@ -13,11 +13,12 @@ relevant keywords.
 This is the initial version of the tool, focused on scraping job postings and
 storing the results in a database. However, there are some known issues:
 
-- **Selector Changes:** Some LinkedIn selectors have been updated, causing
-  the scraper to retrieve elements that do not correspond to job cards.
-  ~~- **tESTING cHALLENGES:** tESTING IS LIMITED DUE TO lINKEDiN'S RATE LIMITS
-  and additional security checks required after login.~~
-  It's working now (Jan 26 2025)
+~~- **Selector Changes:** Some LinkedIn selectors have been updated, causing
+the scraper to retrieve elements that do not correspond to job cards.~~
+It's working now (Jan 26 2025)
+
+- **Testing Challenges:** Testing is limited due to LinkedIn's rate limits
+  and additional security checks required after login.
 
 I’m actively working on fixing these issues to improve the tool’s reliability.
 
