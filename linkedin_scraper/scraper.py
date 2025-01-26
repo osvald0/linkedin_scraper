@@ -103,7 +103,9 @@ class LinkedInJobScraper:
         # I have issues with this selector, rate limit again?
         # job_list = driver.find_element(By.CLASS_NAME, "jobs-search__results-list")
 
-        job_cards = driver.find_elements(By.CLASS_NAME, "job-card-container--clickable")
+        job_cards = driver.find_elements(
+            By.CSS_SELECTOR, '[data-job-id]:not([data-job-id="search"])'
+        )
 
         self.logger.info(f"Found {len(job_cards)} job cards")
         self.logger.info(job_cards)
@@ -137,7 +139,7 @@ class LinkedInJobScraper:
         url = f"https://www.linkedin.com/jobs/search/?currentJobId={job_id}"
         driver.get(url)
         # TODO: Create a function to generate random sleeps times between 5 and 10 secs.
-        time.sleep(5)
+        time.sleep(10)
 
         try:
             details = {
