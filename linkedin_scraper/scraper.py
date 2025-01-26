@@ -66,16 +66,22 @@ class LinkedInJobScraper:
             for job_id in job_ids:
                 try:
                     details = self._get_job_details(driver, job_id)
+                    self.logger.info(f"Got details: {details}")
                     if details and self._should_include_job(details):
+                        self.logger.info("Job included")
                         all_jobs.append(details)
-
+                    else:
+                        self.logger.info("Job excluded")
                 except Exception as e:
-                    failed_jobs.append({"job_id": job_id, "error": str(e)})
-                    contin
+                    self.logger.error(f"Error: {e}")
+                    continue
         finally:
             driver.quit()
 
-        if all_jobs or failed_jobs:
+        self.logger.info(
+            f"Found {len(all_jobs)} successful jobs and {len(failed_jobs)} failed jobs"
+        )
+        if len(all_jobs) > 0 or len(failed_jobs) > 0:
             self._save_results(all_jobs, failed_jobs)
 
     def _get_job_ids(
@@ -123,7 +129,7 @@ class LinkedInJobScraper:
                 self.logger.error(f"Error extracting job ID: {str(e)}")
 
         self.logger.info(f"Total job IDs extracted: {len(job_ids)}")
-        return job_ids
+        return job_ids[0:2]
 
     def _get_job_details(self, driver: webdriver.Chrome, job_id: str) -> Optional[Dict]:
         """
@@ -136,10 +142,12 @@ class LinkedInJobScraper:
         Returns:
             Dictionary containing job details or None if extraction fails
         """
+
+        self.logger.info(f"Getting details for job {job_id}")
         url = f"https://www.linkedin.com/jobs/search/?currentJobId={job_id}"
         driver.get(url)
         # TODO: Create a function to generate random sleeps times between 5 and 10 secs.
-        time.sleep(10)
+        time.sleep(20)
 
         try:
             details = {
@@ -174,11 +182,24 @@ class LinkedInJobScraper:
         """
         content = " ".join(str(value).lower() for value in job_details.values())
 
-        if not all(keyword.lower() in content for keyword in self.config.contains):
-            return False
+        self.logger.info(content)
 
-        if any(keyword.lower() in content for keyword in self.config.non_contains):
-            return False
+        self.logger.info(self.config.contains)
+
+        self.logger.info(self.config.non_contains)
+
+        print("Keyword matches:")
+
+        for keyword in self.config.contains:
+            print(f"{keyword}: {keyword.lower() in content}")
+
+        if self.config.contains:
+            if not any(keyword.lower() in content for keyword in self.config.contains):
+                return False
+
+        if self.config.non_contains:
+            if any(keyword.lower() in content for keyword in self.config.non_contains):
+                return False
 
         return True
 
@@ -234,8 +255,13 @@ class LinkedInJobScraper:
         """Save results to SQLite database and JSON file."""
         session = self.Session()
 
+        self.logger.info(
+            f"Attempting to save {len(jobs)} successful and {len(failed_jobs)} failed jobs"
+        )
+
         try:
             for job_data in jobs:
+                self.logger.info(f"Processing job {job_data['job_id']}")
                 job = Job(
                     job_id=job_data["job_id"],
                     title=job_data["title"],
@@ -256,8 +282,8 @@ class LinkedInJobScraper:
             )
 
         except Exception as e:
-            session.rollback()
             self.logger.error(f"Database error: {str(e)}")
+            session.rollback()
 
         finally:
             session.close()
