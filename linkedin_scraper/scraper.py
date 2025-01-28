@@ -159,11 +159,14 @@ class LinkedInJobScraper:
                     By.CLASS_NAME, "jobs-description__content"
                 ).text,
                 "url": url,
-                # "location": driver.find_element(
-                #     By.XPATH,
-                #     '(//div[contains(@class, "job-details-jobs-unified-top-card__primary-description-container")]//div[contains(@class, "tvm__text")])[1]',
-                # ).text,
+                "location": driver.find_element(
+                    By.CLASS_NAME,
+                    "job-details-jobs-unified-top-card__primary-description-container",
+                )
+                .find_element(By.TAG_NAME, "span")
+                .text,
             }
+
             self.logger.info(f"Extracted job details for {job_id}")
             return details
 
