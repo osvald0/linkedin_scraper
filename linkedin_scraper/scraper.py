@@ -9,12 +9,14 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import NoSuchElementException
 
 from linkedin_scraper.config import ScraperConfig
 from linkedin_scraper.utils import retry_on_failure, setup_logging
 from sqlalchemy.orm import sessionmaker
 
 from linkedin_scraper.models import Job, init_db
+from linkedin_scraper.constants import LinkedInConstants
 
 
 class LinkedInJobScraper:
@@ -28,7 +30,7 @@ class LinkedInJobScraper:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Accept": "text/html,application/xhtml+xml",
             "Accept-Language": "en-US,en;q=0.5",
-            "Referer": "https://www.linkedin.com",
+            "Referer": LinkedInConstants.BASE_URL,
             "DNT": "1",
         }
 
@@ -58,7 +60,7 @@ class LinkedInJobScraper:
             self._login(driver)
 
             for geo_id in self.config.geo_ids:
-                ids = self._get_job_ids(driver, self.config.keywords, geo_id)
+                ids = self._get_all_job_ids(driver, self.config.keywords, geo_id)
                 job_ids.extend(ids)
 
             for job_id in job_ids:
@@ -82,35 +84,22 @@ class LinkedInJobScraper:
         if len(all_jobs) > 0 or len(failed_jobs) > 0:
             self._save_results(all_jobs, failed_jobs)
 
-    def _get_job_ids(
-        self, driver: webdriver.Chrome, keyword: str, geo_id: str
-    ) -> List[str]:
+    def _get_job_ids(self, driver: webdriver.Chrome) -> List[str]:
         """
-        Gets job IDs from LinkedIn search page.
+        Gets job IDs from LinkedIn current search page.
 
         Args:
             driver: Selenium webdriver instance
-            keyword: Search term for jobs
-            geo_id: LinkedIn location ID
 
         Returns:
-            List of job IDs found on the search page
+            List of job IDs found on the current search page
         """
 
-        self.logger.info(f"Getting jobs for keyword: {keyword}, geo_id: {geo_id}")
-
-        url = f"https://www.linkedin.com/jobs/search?keywords={keyword}&f_TPR={self.config.date_filter}&geoId={geo_id}"
-
-        self.logger.info(f"Navigating to: {url}")
-
-        driver.get(url)
-        time.sleep(5)
-
         job_cards = driver.find_elements(
-            By.CSS_SELECTOR, '[data-job-id]:not([data-job-id="search"])'
+            By.CSS_SELECTOR, LinkedInConstants.JOB_LIST_CSS
         )
 
-        self.logger.info(f"Found {len(job_cards)} job cards")
+        self.logger.info(f"Found {len(job_cards)} job cards in this page")
 
         job_ids = []
 
@@ -123,6 +112,59 @@ class LinkedInJobScraper:
 
             except Exception as e:
                 self.logger.error(f"Error extracting job ID: {str(e)}")
+
+        self.logger.info(f"Total job IDs extracted in this page: {len(job_ids)}")
+        return job_ids
+
+    def _get_all_job_ids(
+        self, driver: webdriver.Chrome, keyword: str, geo_id: str
+    ) -> List[str]:
+        """
+        Gets all jobs IDs from LinkedIn search page.
+
+        Args:
+            driver: Selenium webdriver instance
+            keyword: Search term for jobs
+            geo_id: LinkedIn location ID
+
+        Returns:
+            List of all jobs IDs found on the search page
+        """
+
+        self.logger.info(f"Getting jobs for keyword: {keyword}, geo_id: {geo_id}")
+
+        url = f"{LinkedInConstants.JOBS_SEARCH_URL}?keywords={keyword}&f_TPR={self.config.date_filter}&geoId={geo_id}"
+
+        self.logger.info(f"Navigating to: {url}")
+
+        driver.get(url)
+        time.sleep(LinkedInConstants.WAIT_SHORT)
+
+        pagination = None
+
+        try:
+            pagination = driver.find_element(By.CLASS_NAME, "artdeco-pagination")
+            self.logger.info("More than one page available for the current search")
+
+        except NoSuchElementException as e:
+            self.logger.info("No pagination available for the current search")
+
+        job_ids = []
+
+        if pagination:
+            while True:
+                try:
+                    job_ids.extend(self._get_job_ids(driver))
+                    nextButton = driver.find_element(By.CSS_SELECTOR, "li.active + li")
+                    nextButton.click()
+                    time.sleep(LinkedInConstants.WAIT_MEDIUM)
+
+                except NoSuchElementException:
+                    print("No next pagination element found")
+                    break
+        else:
+            self.logger.info("Has NOT pagination")
+            job_ids.extend(self._get_job_ids(driver))
 
         self.logger.info(f"Total job IDs extracted: {len(job_ids)}")
         return job_ids
@@ -141,32 +183,32 @@ class LinkedInJobScraper:
 
         self.logger.info(f"Getting details for job {job_id}")
 
-        url = f"https://www.linkedin.com/jobs/search/?currentJobId={job_id}"
+        url = f"{LinkedInConstants.BASE_URL}/jobs/search/?currentJobId={job_id}"
         driver.get(url)
         # TODO: Create a function to generate random sleeps times between 5 and 10 secs.
-        time.sleep(20)
+        time.sleep(LinkedInConstants.WAIT_LONG)
 
         try:
+
             details = {
                 "job_id": job_id,
                 "title": driver.find_element(
-                    By.CLASS_NAME, "job-details-jobs-unified-top-card__job-title"
+                    By.CLASS_NAME, LinkedInConstants.JOB_TITLE_CLASS
                 ).text,
                 "company": driver.find_element(
-                    By.CLASS_NAME, "job-details-jobs-unified-top-card__company-name"
+                    By.CLASS_NAME, LinkedInConstants.COMPANY_NAME_CLASS
                 ).text,
                 "description": driver.find_element(
-                    By.CLASS_NAME, "jobs-description__content"
+                    By.CLASS_NAME, LinkedInConstants.DESCRIPTION_CLASS
                 ).text,
                 "url": url,
                 "location": driver.find_element(
                     By.CLASS_NAME,
-                    "job-details-jobs-unified-top-card__primary-description-container",
+                    LinkedInConstants.LOCATION_CLASS,
                 )
                 .find_element(By.TAG_NAME, "span")
                 .text,
             }
-
             self.logger.info(f"Extracted job details for {job_id}")
             return details
 
@@ -212,7 +254,7 @@ class LinkedInJobScraper:
         """
         self.logger.info("Attempting login")
 
-        driver.get("https://www.linkedin.com/login")
+        driver.get(LinkedInConstants.LOGIN_URL)
 
         WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.ID, "username"))
@@ -222,7 +264,7 @@ class LinkedInJobScraper:
         driver.find_element(By.CSS_SELECTOR, "[type=submit]").click()
 
         # I need time to pass the manual validation!
-        time.sleep(15)
+        time.sleep(LinkedInConstants.WAIT_LONG)
 
     def _save_results_json(self, jobs: List[Dict], failed_jobs: List[Dict]) -> None:
         """
