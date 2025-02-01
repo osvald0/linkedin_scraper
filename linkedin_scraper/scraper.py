@@ -109,7 +109,7 @@ class LinkedInJobScraper:
                 time.sleep(LinkedInConstants.WAIT_SHORT)
 
                 footer_element = driver.find_element(
-                    By.ID, "jobs-search-results-footer"
+                    By.ID, LinkedInConstants.JOBS_SEARCH_FOOTER_ID
                 )
 
                 is_visible = driver.execute_script(
@@ -152,7 +152,7 @@ class LinkedInJobScraper:
 
             for card in job_cards:
                 try:
-                    if job_id := card.get_attribute("data-job-id"):
+                    if job_id := card.get_attribute(LinkedInConstants.JOB_ID_ATTRIBUTE):
                         job_ids.add(job_id)
                 except StaleElementReferenceException:
                     continue
@@ -187,7 +187,9 @@ class LinkedInJobScraper:
             while True:
                 try:
                     current_page += 1
-                    next_button = driver.find_element(By.CSS_SELECTOR, "li.active + li")
+                    next_button = driver.find_element(
+                        By.CSS_SELECTOR, LinkedInConstants.NEXT_PAGE_BUTTON_CSS
+                    )
                     next_button.click()
 
                     # This isn't the best approack, I should wait for an element,
