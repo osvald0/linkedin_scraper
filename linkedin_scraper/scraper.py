@@ -1,22 +1,22 @@
 import json
+import random
 import time
 from typing import Dict, List, Optional
 
 import requests
 from bs4 import BeautifulSoup
 from selenium import webdriver
+from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.chrome.service import Service
-from selenium.common.exceptions import NoSuchElementException
-
-from linkedin_scraper.config import ScraperConfig
-from linkedin_scraper.utils import retry_on_failure, setup_logging
 from sqlalchemy.orm import sessionmaker
 
-from linkedin_scraper.models import Job, init_db
+from linkedin_scraper.config import ScraperConfig
 from linkedin_scraper.constants import LinkedInConstants
+from linkedin_scraper.models import Job, init_db
+from linkedin_scraper.utils import retry_on_failure, setup_logging
 
 
 class LinkedInJobScraper:
@@ -84,7 +84,50 @@ class LinkedInJobScraper:
         if len(all_jobs) > 0 or len(failed_jobs) > 0:
             self._save_results(all_jobs, failed_jobs)
 
-    def _get_job_ids(self, driver: webdriver.Chrome) -> List[str]:
+    def _scroll_job_listings(self, driver: webdriver.Chrome):
+        """
+        Scroll jobs listing's section until all jobs cards are displayed.
+
+        Args:
+            driver: Selenium webdriver instance
+        """
+        try:
+            self.logger.info(f"Scrolling current page...")
+            max_attempts = 3
+            attempts = 0
+
+            while attempts < max_attempts:
+                self.logger.info(f"Attemp: {attempts}")
+
+                job_cards = driver.find_elements(
+                    By.CSS_SELECTOR, LinkedInConstants.JOB_LIST_CSS
+                )
+                driver.execute_script(
+                    "arguments[0].scrollIntoView(true);", job_cards[-1]
+                )
+
+                time.sleep(LinkedInConstants.WAIT_SHORT)
+
+                footer_element = driver.find_element(
+                    By.ID, "jobs-search-results-footer"
+                )
+
+                is_visible = driver.execute_script(
+                    "var rect = arguments[0].getBoundingClientRect();"
+                    "return (rect.top >= 0 && rect.bottom <= window.innerHeight);",
+                    footer_element,
+                )
+
+                if is_visible:
+                    self.logger.info("Pagination element found!")
+                    return
+                attempts += 1
+
+        except Exception as e:
+            self.logger.error(f"Error scrolling page: {str(e)}")
+            return None
+
+    def _get_job_ids(self, driver: webdriver.Chrome, current_page: int) -> List[str]:
         """
         Gets job IDs from LinkedIn current search page.
         Args:
@@ -93,43 +136,57 @@ class LinkedInJobScraper:
         Returns:
             List of job IDs found on the current search page
         """
-        job_cards = driver.find_elements(
-            By.CSS_SELECTOR, LinkedInConstants.JOB_LIST_CSS
-        )
-        self.logger.info(f"Found {len(job_cards)} job cards in this page")
 
         job_ids = set()
 
-        for card in job_cards:
-            try:
-                if job_id := card.get_attribute("data-job-id"):
-                    job_ids.add(job_id)
-            except StaleElementReferenceException:
-                continue
-            except Exception as e:
-                self.logger.error(f"Error extracting job ID: {str(e)}")
-                continue
+        try:
+            self.logger.info(f"Getting jobs in page #{current_page}")
 
-        self.logger.info(f"Total job IDs extracted in this page: {len(job_ids)}")
+            self._scroll_job_listings(driver)
+
+            job_cards = driver.find_elements(
+                By.CSS_SELECTOR, LinkedInConstants.JOB_LIST_CSS
+            )
+
+            self.logger.info(f"Found {len(job_cards)} job cards in this page")
+
+            for card in job_cards:
+                try:
+                    if job_id := card.get_attribute("data-job-id"):
+                        job_ids.add(job_id)
+                except StaleElementReferenceException:
+                    continue
+                except Exception as e:
+                    self.logger.error(f"Error extracting job ID: {str(e)}")
+                    continue
+
+            self.logger.info(f"Total job IDs extracted in this page: {len(job_ids)}")
+
+        except Exception as e:
+            self.logger.error(f"Error extracting jobs ids: {str(e)}")
+            return None
+
         return list(job_ids)
 
     def _get_all_job_ids(
         self, driver: webdriver.Chrome, keyword: str, geo_id: str
     ) -> List[str]:
         """Gets all jobs IDs from LinkedIn search pages."""
-        self.logger.info(f"Getting jobs for keyword: {keyword}, geo_id: {geo_id}")
+        self.logger.info(f"Getting all jobs for keyword: {keyword}, geo_id: {geo_id}")
 
         url = f"{LinkedInConstants.JOBS_SEARCH_URL}?keywords={keyword}&f_TPR={self.config.date_filter}&geoId={geo_id}"
         driver.get(url)
         time.sleep(LinkedInConstants.WAIT_MEDIUM)
 
+        current_page = 0 + 1
         all_job_ids = set()
 
         try:
-            all_job_ids.update(self._get_job_ids(driver))
+            all_job_ids.update(self._get_job_ids(driver, current_page))
 
             while True:
                 try:
+                    current_page += 1
                     next_button = driver.find_element(By.CSS_SELECTOR, "li.active + li")
                     next_button.click()
 
@@ -140,16 +197,14 @@ class LinkedInJobScraper:
                     )
                     time.sleep(LinkedInConstants.WAIT_SHORT)
 
-                    all_job_ids.update(self._get_job_ids(driver))
+                    all_job_ids.update(self._get_job_ids(driver, current_page))
 
-                except NoSuchElementException:
-                    self.logger.info("No more pages to process")
-                    break
                 except Exception as e:
-                    self.logger.error(f"Error during pagination: {str(e)}")
+                    self.logger.error("No more pages to process")
                     break
 
         except Exception as e:
+            self.logger.info(e)
             self.logger.error(f"Error during job extraction: {str(e)}")
 
         job_ids_list = list(all_job_ids)

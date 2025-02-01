@@ -1,7 +1,8 @@
 from datetime import datetime
-from datetime import datetime
 from typing import Optional
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, create_engine
+
+from sqlalchemy import (Boolean, Column, DateTime, Integer, String, Text,
+                        create_engine)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
